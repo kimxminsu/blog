@@ -4,6 +4,7 @@ import { idToUuid } from "notion-utils"
 
 import getAllPageIds from "src/libs/utils/notion/getAllPageIds"
 import getPageProperties from "src/libs/utils/notion/getPageProperties"
+import { unwrapRecordValue } from "src/libs/utils/notion/unwrapRecord"
 import { TPosts } from "src/types"
 
 /**
@@ -17,13 +18,40 @@ export const getPosts = async () => {
 
   const response = await api.getPage(id)
   id = idToUuid(id)
-  const collectionValue = Object.values(response.collection)[0]?.value as any
-  const collection = collectionValue?.value ?? collectionValue
+
+  if (Object.keys(response.collection_query).length === 0) {
+    const rawMetadataForQuery = unwrapRecordValue(response.block[id])
+    if (
+      rawMetadataForQuery?.type === "collection_view_page" ||
+      rawMetadataForQuery?.type === "collection_view"
+    ) {
+      const collectionId = Object.keys(response.collection)[0]
+      const viewIds: string[] = rawMetadataForQuery?.view_ids || []
+      for (const viewId of viewIds) {
+        try {
+          const collectionView = unwrapRecordValue(response.collection_view[viewId])
+          const collectionData = await api.getCollectionData(
+            collectionId,
+            viewId,
+            collectionView
+          )
+          if (!response.collection_query[collectionId]) {
+            response.collection_query[collectionId] = {}
+          }
+          response.collection_query[collectionId][viewId] =
+            (collectionData as any)?.result?.reducerResults
+        } catch (e) {
+          console.warn("Failed to fetch collection data for view", viewId, e)
+        }
+      }
+    }
+  }
+
+  const collection = unwrapRecordValue(Object.values(response.collection)[0])
   const block = response.block
   const schema = collection?.schema
 
-  const blockValue = (block[id].value as any)?.value ?? block[id].value
-  const rawMetadata = blockValue
+  const rawMetadata = unwrapRecordValue(block[id])
 
   // Check Type
   if (
@@ -34,17 +62,22 @@ export const getPosts = async () => {
   } else {
     // Construct Data
     const pageIds = getAllPageIds(response)
+    const wholeBlocks = await (await api.getBlocks(pageIds)).recordMap.block
+
     const data = []
     for (let i = 0; i < pageIds.length; i++) {
       const id = pageIds[i]
-      const properties = (await getPageProperties(id, block, schema)) || null
+      const properties =
+        (await getPageProperties(id, wholeBlocks, schema)) || null
+      const blockData = unwrapRecordValue(wholeBlocks[id])
+      if (!blockData) continue
+
       // Add fullwidth, createdtime to properties
-      const pageBlockValue = (block[id].value as any)?.value ?? block[id].value
       properties.createdTime = new Date(
-        pageBlockValue?.created_time
+        blockData?.created_time
       ).toString()
       properties.fullWidth =
-        (pageBlockValue?.format as any)?.page_full_width ?? false
+        (blockData?.format as any)?.page_full_width ?? false
 
       data.push(properties)
     }

@@ -1,0 +1,9 @@
+# *
+User-agent: *
+Allow: /
+
+# Host
+Host: https://kingsu.vercel.app/
+
+# Sitemaps
+Sitemap: https://kingsu.vercel.app/sitemap.xml
